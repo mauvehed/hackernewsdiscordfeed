@@ -3,6 +3,7 @@ This module defines the Discord bot that sends daily messages with the latest be
 """
 
 import discord
+from discord.ext import commands
 import asyncio
 from dotenv import load_dotenv
 import os
@@ -12,31 +13,66 @@ from hackernewsdiscordfeed.hackernews import fetch_hacker_news_stories
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
+CHANNEL_ID_STR = os.getenv('CHANNEL_ID')
+
+# Ensure the environment variables are properly loaded
+if TOKEN is None:
+    raise ValueError("DISCORD_BOT_TOKEN environment variable is not set")
+
+if CHANNEL_ID_STR is None:
+    raise ValueError("CHANNEL_ID environment variable is not set")
+
+CHANNEL_ID = int(CHANNEL_ID_STR)
 
 intents = discord.Intents.default()
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-async def send_daily_message():
+async def fetch_and_post_stories():
     """
-    Sends a daily message to the specified Discord channel with the latest best stories from Hacker News.
+    Fetches the latest best stories from Hacker News and posts them to the specified Discord channel as embeds.
     """
-    await client.wait_until_ready()
-    channel = client.get_channel(CHANNEL_ID)
-    while not client.is_closed():
-        stories = await fetch_hacker_news_stories()
-        message = "Today's Top Hacker News Stories:\n"
-        for story in stories:
-            message += f"{story['title']} (Score: {story['score']})\n{story['url']}\n\n"
-        await channel.send(message)
-        await asyncio.sleep(86400)
+    channel = bot.get_channel(CHANNEL_ID)
+    stories = await fetch_hacker_news_stories()
+    for story in stories:
+        url = story.get('url')
+        if url:  # Only post stories with valid URLs
+            embed = discord.Embed(
+                title=story['title'],
+                description=f"Score: {story['score']}",
+                url=url,
+                color=discord.Color.blue()
+            )
+            await channel.send(embed=embed)
 
-@client.event
+@bot.event
 async def on_ready():
     """
     Event handler that is called when the bot is ready.
     """
-    print(f'Logged in as {client.user.name}')
+    print(f'Logged in as {bot.user.name}')
+    bot.loop.create_task(daily_task())
 
-client.loop.create_task(send_daily_message())
-client.run(TOKEN)
+async def daily_task():
+    """
+    A daily task that sends the best stories from Hacker News every 24 hours.
+    """
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        await fetch_and_post_stories()
+        await asyncio.sleep(86400)
+
+@bot.command(name='post_stories')
+async def post_stories(ctx):
+    """
+    Command to manually fetch and post the latest best stories from Hacker News.
+    """
+    await fetch_and_post_stories()
+    await ctx.send("Posted today's top Hacker News stories!")
+
+async def main():
+    """
+    The main function to start the bot.
+    """
+    await bot.start(TOKEN)
+
+asyncio.run(main())
